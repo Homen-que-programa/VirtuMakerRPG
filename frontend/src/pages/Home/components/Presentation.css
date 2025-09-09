@@ -1,0 +1,51 @@
+main {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100vw;
+    height: 100%;
+    flex: 1;
+}
+
+.presentation {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 70vh;
+    text-align: center;
+    background-color: #ebebeb;
+    width: 50%;
+    border-radius: 15px;
+    box-shadow: #44444467 -2px 4px 12px;
+}
+
+.presentation h1 {
+    font-size: 2.5rem;
+    margin-bottom: 1rem;
+}
+
+.presentation p {
+    font-size: 1.2rem;
+    margin-bottom: 2rem;
+    color: #444;
+}
+
+.cta {
+    background: linear-gradient(90deg, #ff9800, #ffc107);
+    color: #fff;
+    border: none;
+    border-radius: 25px;
+    padding: 0.8rem 2.2rem;
+    font-size: 1.1rem;
+    font-weight: bold;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    transition: background 0.2s, transform 0.2s;
+    text-decoration: none;
+}
+
+.cta:hover {
+    background: linear-gradient(90deg, #ffc107, #ff9800);
+    transform: scale(1.05);
+}

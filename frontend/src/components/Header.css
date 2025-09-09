@@ -1,0 +1,36 @@
+header {
+    background-color: #333;
+    color: white;
+    padding: 30px 80px;
+}
+
+header ul {
+    list-style-type: none;
+    display: flex;
+    gap: 32px;
+    align-items: center;
+    font-size: 1.2rem;
+    margin: 0;
+    padding: 0;
+}
+
+.logo {
+    font-weight: bold;
+    font-size: 1.5rem;
+    margin-right: auto;
+    letter-spacing: 2px;
+}
+
+li:hover {
+    cursor: pointer;
+    text-decoration: underline;
+    color: #ffd700;
+    transition: color 0.2s;
+}
+
+.logo:hover {
+	cursor: default;
+	color: white;
+	text-decoration: none;
+	transition: none;
+}
