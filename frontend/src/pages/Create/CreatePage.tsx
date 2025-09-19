@@ -27,11 +27,6 @@ const CreatePage: React.FC = () => {
             <h2>Item</h2>
             <p>Crie armas, poções e mais.</p>
           </Link>
-          <Link className="create-card" to="/criar/sprite">
-            <div className="icon">🎨</div>
-            <h2>Sprite</h2>
-            <p>Desenhe pixels como no Paint/Photoshop.</p>
-          </Link>
         </div>
       </main>
       <Footer />

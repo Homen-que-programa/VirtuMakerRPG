@@ -23,8 +23,7 @@ header ul {
 
 li:hover {
     cursor: pointer;
-    text-decoration: underline;
-    color: #ffd700;
+    color: white;
     transition: color 0.2s;
 }
 
@@ -33,4 +32,18 @@ li:hover {
 	color: white;
 	text-decoration: none;
 	transition: none;
+}
+
+a {
+    font-size: 1rem;
+    text-decoration: none;
+    letter-spacing: 2px;
+    color: white;
+    transition: 0.2s;
+}
+
+a:hover {
+    text-decoration: none;
+    color: rgb(105, 105, 105);
+    transition: color 0.2s;   
 }
