@@ -99,7 +99,10 @@ type SelectionClipboard = {
 };
 
 type HistoryEntry = {
+  cellUnit: number;
+  snapDenominator: number;
   cells: string[];
+  cellTextures: Record<string, string>;
   doors: Door[];
   walls: InteriorWall[];
 };
@@ -111,6 +114,16 @@ type Rect = {
   height: number;
 };
 
+type CellRenderDescriptor = {
+  key: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  selected: boolean;
+  texture?: string;
+};
+
 const GRID_SIZE = 48;
 const GRID_EXTENT = 120;
 const OFFSET_EPSILON = 1e-6;
@@ -119,6 +132,8 @@ const DOOR_THICKNESS = 0.12;
 const ZOOM_MIN = 0.3;
 const ZOOM_MAX = 4;
 const gridSnapOptions: number[] = [0, 1, 2, 4, 8];
+const CELL_UNIT_OPTIONS = [1, 0.5, 0.25, 0.125] as const;
+const CELL_RENDER_UNIT_OPTIONS = [8, 4, 2, 1, 0.5, 0.25, 0.125] as const;
 const paletteTabs: { id: PaletteTab; label: string }[] = [
   { id: 'layers', label: 'Layers' },
   { id: 'images', label: 'Images' },
@@ -283,6 +298,323 @@ const cloneWalls = (source: InteriorWall[]): InteriorWall[] =>
     start: { ...wall.start },
     end: { ...wall.end },
   }));
+
+const isMultipleOfUnit = (value: number, unit: number) => Math.abs(value / unit - Math.round(value / unit)) <= OFFSET_EPSILON;
+
+const pointAlignedToUnit = (point: Point, unit: number) => isMultipleOfUnit(point.x, unit) && isMultipleOfUnit(point.y, unit);
+
+const segmentsAlignedToUnit = (items: Array<{ start: Point; end: Point }>, unit: number) =>
+  items.every(({ start, end }) => pointAlignedToUnit(start, unit) && pointAlignedToUnit(end, unit));
+
+const filterTexturesForCells = (textures: Record<string, string>, cellsSet: Set<string>) => {
+  const filtered: Record<string, string> = {};
+  cellsSet.forEach((key) => {
+    const texture = textures[key];
+    if (texture) {
+      filtered[key] = texture;
+    }
+  });
+  return filtered;
+};
+
+const tryCoarsenCells = (
+  cellsSet: Set<string>,
+  textures: Record<string, string>,
+  currentUnit: number,
+  targetUnit: number,
+): { cells: string[]; textures: Record<string, string> } | null => {
+  if (cellsSet.size === 0) {
+    return { cells: [], textures: {} };
+  }
+
+  const rawFactor = targetUnit / currentUnit;
+  const factor = Math.round(rawFactor);
+  if (!Number.isFinite(factor) || factor <= 1 || Math.abs(rawFactor - factor) > OFFSET_EPSILON) {
+    return null;
+  }
+
+  const expectedCount = factor * factor;
+  const visitedGroups = new Set<string>();
+  const nextCells: string[] = [];
+  const nextTextures: Record<string, string> = {};
+
+  for (const key of cellsSet) {
+    const { x, y } = fromCellKey(key);
+    const baseX = normalizeCoord(Math.floor((x + OFFSET_EPSILON) / targetUnit) * targetUnit);
+    const baseY = normalizeCoord(Math.floor((y + OFFSET_EPSILON) / targetUnit) * targetUnit);
+    const groupKey = toCellKey(baseX, baseY);
+    if (visitedGroups.has(groupKey)) {
+      continue;
+    }
+
+    let count = 0;
+    let groupTexture: string | undefined;
+    for (let ix = 0; ix < factor; ix += 1) {
+      const childX = normalizeCoord(baseX + ix * currentUnit);
+      for (let iy = 0; iy < factor; iy += 1) {
+        const childY = normalizeCoord(baseY + iy * currentUnit);
+        const childKey = toCellKey(childX, childY);
+        if (!cellsSet.has(childKey)) {
+          return null;
+        }
+        count += 1;
+        const childTexture = textures[childKey];
+        if (childTexture) {
+          if (groupTexture && groupTexture !== childTexture) {
+            return null;
+          }
+          groupTexture = childTexture;
+        }
+      }
+    }
+
+    if (count !== expectedCount) {
+      return null;
+    }
+
+    visitedGroups.add(groupKey);
+    nextCells.push(groupKey);
+    if (groupTexture) {
+      nextTextures[groupKey] = groupTexture;
+    }
+  }
+
+  if (nextCells.length * expectedCount !== cellsSet.size) {
+    return null;
+  }
+
+  nextCells.sort();
+  return { cells: nextCells, textures: nextTextures };
+};
+
+const optimizeCellGrid = (
+  cellsSet: Set<string>,
+  textures: Record<string, string>,
+  currentUnit: number,
+  walls: InteriorWall[],
+  doors: Door[],
+): { unit: number; cells: string[]; textures: Record<string, string>; unitChanged: boolean } => {
+  const defaultCells = Array.from(cellsSet).sort();
+  const defaultTextures = filterTexturesForCells(textures, cellsSet);
+  const combinedSegments: Array<{ start: Point; end: Point }> = [...walls, ...doors];
+
+  for (const candidate of CELL_UNIT_OPTIONS) {
+    if (candidate <= currentUnit + OFFSET_EPSILON) {
+      continue;
+    }
+
+    const rawFactor = candidate / currentUnit;
+    const factor = Math.round(rawFactor);
+    if (!Number.isFinite(factor) || factor <= 1 || Math.abs(rawFactor - factor) > OFFSET_EPSILON) {
+      continue;
+    }
+
+    if (!segmentsAlignedToUnit(combinedSegments, candidate)) {
+      continue;
+    }
+
+    const coarsened = tryCoarsenCells(cellsSet, textures, currentUnit, candidate);
+    if (coarsened) {
+      return { unit: candidate, cells: coarsened.cells, textures: coarsened.textures, unitChanged: true };
+    }
+  }
+
+  if (cellsSet.size === 0) {
+    for (const candidate of CELL_UNIT_OPTIONS) {
+      if (candidate <= currentUnit + OFFSET_EPSILON) {
+        continue;
+      }
+      if (!segmentsAlignedToUnit(combinedSegments, candidate)) {
+        continue;
+      }
+      return { unit: candidate, cells: [], textures: {}, unitChanged: true };
+    }
+  }
+
+  return { unit: currentUnit, cells: defaultCells, textures: defaultTextures, unitChanged: false };
+};
+
+const formatUnitLabel = (unit: number) => {
+  if (unit >= 1 - OFFSET_EPSILON) {
+    return '1';
+  }
+  const denominator = Math.round(1 / unit);
+  return `1/${denominator}`;
+};
+
+const expandCellsToUnit = (
+  cellsSource: string[],
+  texturesSource: Record<string, string>,
+  sourceUnit: number,
+  targetUnit: number,
+): { cells: string[]; textures: Record<string, string> } => {
+  if (cellsSource.length === 0) {
+    return { cells: [], textures: {} };
+  }
+
+  if (Math.abs(sourceUnit - targetUnit) <= OFFSET_EPSILON) {
+    return {
+      cells: [...cellsSource].sort(),
+      textures: { ...texturesSource },
+    };
+  }
+
+  const ratio = sourceUnit / targetUnit;
+  const factor = Math.round(ratio);
+  if (!Number.isFinite(factor) || factor <= 1 || Math.abs(ratio - factor) > OFFSET_EPSILON) {
+    return {
+      cells: [...cellsSource].sort(),
+      textures: { ...texturesSource },
+    };
+  }
+
+  const nextCells: string[] = [];
+  const seen = new Set<string>();
+  const nextTextures: Record<string, string> = {};
+
+  cellsSource.forEach((key) => {
+    const { x, y } = fromCellKey(key);
+    const texture = texturesSource[key];
+    for (let ix = 0; ix < factor; ix += 1) {
+      const childX = normalizeCoord(x + ix * targetUnit);
+      for (let iy = 0; iy < factor; iy += 1) {
+        const childY = normalizeCoord(y + iy * targetUnit);
+        const childKey = toCellKey(childX, childY);
+        if (!seen.has(childKey)) {
+          seen.add(childKey);
+          nextCells.push(childKey);
+        }
+        if (texture) {
+          nextTextures[childKey] = texture;
+        }
+      }
+    }
+  });
+
+  nextCells.sort();
+  return { cells: nextCells, textures: nextTextures };
+};
+
+const aggregateCellsForDisplay = (
+  cellsSource: Set<string>,
+  cellUnit: number,
+  textures: Record<string, string>,
+  selectionSet: Set<string> | null,
+): CellRenderDescriptor[] => {
+  if (cellsSource.size === 0 || cellUnit <= 0) {
+    return [];
+  }
+
+  const candidateUnits = CELL_RENDER_UNIT_OPTIONS.filter((unit) => {
+    if (unit < cellUnit - OFFSET_EPSILON) {
+      return false;
+    }
+    const ratio = unit / cellUnit;
+    return Math.abs(ratio - Math.round(ratio)) <= OFFSET_EPSILON;
+  }).sort((a, b) => b - a);
+
+  const remaining = new Set(cellsSource);
+  const descriptors: CellRenderDescriptor[] = [];
+
+  while (remaining.size > 0) {
+    const iterator = remaining.values();
+    const firstKey = iterator.next().value as string;
+    let descriptor: CellRenderDescriptor | null = null;
+
+    for (const unit of candidateUnits) {
+      const ratio = unit / cellUnit;
+      const factor = Math.max(1, Math.round(ratio));
+      const { x, y } = fromCellKey(firstKey);
+      const baseX = normalizeCoord(Math.floor((x + OFFSET_EPSILON) / unit) * unit);
+      const baseY = normalizeCoord(Math.floor((y + OFFSET_EPSILON) / unit) * unit);
+      const collectedKeys: string[] = [];
+      let selected = selectionSet ? selectionSet.has(firstKey) : false;
+      let consistent = true;
+      let texture: string | undefined;
+
+      for (let ix = 0; ix < factor && consistent; ix += 1) {
+        const childX = normalizeCoord(baseX + ix * cellUnit);
+        for (let iy = 0; iy < factor && consistent; iy += 1) {
+          const childY = normalizeCoord(baseY + iy * cellUnit);
+          const childKey = toCellKey(childX, childY);
+          if (!remaining.has(childKey)) {
+            consistent = false;
+            break;
+          }
+          collectedKeys.push(childKey);
+          const childTexture = textures[childKey];
+          if (childTexture) {
+            if (factor > 1) {
+              consistent = false;
+              break;
+            }
+            if (!texture) {
+              texture = childTexture;
+            } else if (texture !== childTexture) {
+              consistent = false;
+              break;
+            }
+          }
+          if (selectionSet) {
+            const childSelected = selectionSet.has(childKey);
+            if (ix === 0 && iy === 0) {
+              selected = childSelected;
+            } else if (childSelected !== selected) {
+              consistent = false;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!consistent) {
+        continue;
+      }
+
+      descriptor = {
+        key: `${coordToString(baseX)}:${coordToString(baseY)}:${coordToString(unit)}`,
+        x: baseX,
+        y: baseY,
+        width: unit,
+        height: unit,
+        selected: selectionSet ? selected : false,
+        texture,
+      };
+
+      collectedKeys.forEach((key) => {
+        remaining.delete(key);
+      });
+      break;
+    }
+
+    if (!descriptor) {
+      const fallbackTexture = textures[firstKey];
+      const { x, y } = fromCellKey(firstKey);
+      const fallbackSelected = selectionSet ? selectionSet.has(firstKey) : false;
+      descriptor = {
+        key: `${firstKey}:${coordToString(cellUnit)}`,
+        x,
+        y,
+        width: cellUnit,
+        height: cellUnit,
+        selected: fallbackSelected,
+        texture: fallbackTexture,
+      };
+      remaining.delete(firstKey);
+    }
+
+    descriptors.push(descriptor);
+  }
+
+  descriptors.sort((a, b) => {
+    if (Math.abs(a.y - b.y) > OFFSET_EPSILON) {
+      return a.y - b.y;
+    }
+    return a.x - b.x;
+  });
+
+  return descriptors;
+};
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
@@ -716,7 +1048,14 @@ const InteriorBuilderPage: React.FC = () => {
   const selectionDragRef = useRef<{ startWorld: Point; initialOffset: Point } | null>(null);
   const freeSelectionDraftRef = useRef<Set<string> | null>(null);
   const drawingToolRef = useRef<Tool | null>(null);
-  const historyRef = useRef<HistoryEntry[]>([{ cells: [], doors: [], walls: [] }]);
+  const historyRef = useRef<HistoryEntry[]>([{
+    cellUnit,
+    snapDenominator,
+    cells: [],
+    cellTextures: {},
+    doors: [],
+    walls: [],
+  }]);
   const historyIndexRef = useRef(0);
   const cellUnitRef = useRef(cellUnit);
   const textureInputRef = useRef<HTMLInputElement | null>(null);
@@ -781,6 +1120,10 @@ const InteriorBuilderPage: React.FC = () => {
   const canCopy = selection.kind === 'area';
   const canDelete = selection.kind !== 'none';
   const canPaste = hasClipboard;
+  const cellRenderRects = useMemo(
+    () => aggregateCellsForDisplay(cellSet, cellUnit, cellTextures, selectionCellSet),
+    [cellSet, cellUnit, cellTextures, selectionCellSet],
+  );
   const selectedWall = useMemo(() => (selection.kind === 'wall' ? walls.find((wall) => wall.id === selection.wallId) ?? null : null), [selection, walls]);
   const selectedDoor = useMemo(() => (selection.kind === 'door' ? doors.find((door) => door.id === selection.doorId) ?? null : null), [selection, doors]);
   const selectedWallIds = useMemo(() => {
@@ -885,43 +1228,30 @@ const InteriorBuilderPage: React.FC = () => {
       return;
     }
 
-    const factor = Math.round(currentUnit / targetUnit);
-    if (!Number.isFinite(factor) || factor <= 1) {
-      return;
-    }
+    const expanded = expandCellsToUnit(cells, cellTextures, currentUnit, targetUnit);
+    setCells(expanded.cells);
+    setCellTextures(expanded.textures);
 
-    const upgradeCells = (cellsList: string[]): string[] => {
-      const next: string[] = [];
-      const seen = new Set<string>();
-      cellsList.forEach((key) => {
-        const { x, y } = fromCellKey(key);
-        for (let ix = 0; ix < factor; ix += 1) {
-          const childX = normalizeCoord(x + ix * targetUnit);
-          for (let iy = 0; iy < factor; iy += 1) {
-            const childY = normalizeCoord(y + iy * targetUnit);
-            const childKey = toCellKey(childX, childY);
-            if (!seen.has(childKey)) {
-              seen.add(childKey);
-              next.push(childKey);
-            }
-          }
-        }
-      });
-      return next.sort();
-    };
-
-    setCells((prev) => upgradeCells(prev));
-    historyRef.current = historyRef.current.map((entry) => ({
-      ...entry,
-      cells: upgradeCells(entry.cells),
-    }));
+    historyRef.current = historyRef.current.map((entry) => {
+      if (entry.cellUnit <= targetUnit + OFFSET_EPSILON) {
+        return entry;
+      }
+      const upgraded = expandCellsToUnit(entry.cells, entry.cellTextures, entry.cellUnit, targetUnit);
+      return {
+        ...entry,
+        cellUnit: targetUnit,
+        cells: upgraded.cells,
+        cellTextures: upgraded.textures,
+      };
+    });
     historyIndexRef.current = Math.min(historyIndexRef.current, historyRef.current.length - 1);
+
     setCellUnit(targetUnit);
+    cellUnitRef.current = targetUnit;
     setSelection({ kind: 'none' });
     setClipboard(null);
-    cellUnitRef.current = targetUnit;
-    setStatus(`Grade refinada para blocos de ${(targetUnit).toFixed(3).replace(/\.0+$/, '')}.`);
-  }, []);
+    setStatus(`Grade refinada para blocos de ${formatUnitLabel(targetUnit)}.`);
+  }, [cells, cellTextures, setClipboard, setStatus]);
 
   useEffect(() => {
     if (snapDenominator > 1) {
@@ -979,42 +1309,75 @@ const InteriorBuilderPage: React.FC = () => {
     nextWalls: InteriorWall[],
     message?: string,
     textureMoves?: Array<[string, string]>,
-  ) => {
-    const nextCellsArray = Array.from(nextCellsSet).sort();
+  ): { cellsSet: Set<string>; cellUnit: number } => {
+    const workingTextures: Record<string, string> = { ...cellTextures };
+
+    if (textureMoves && textureMoves.length > 0) {
+      textureMoves.forEach(([fromKey, toKey]) => {
+        if (fromKey === toKey) {
+          return;
+        }
+        const texture = workingTextures[fromKey];
+        if (texture !== undefined) {
+          workingTextures[toKey] = texture;
+        }
+        delete workingTextures[fromKey];
+      });
+    }
+
+    Object.keys(workingTextures).forEach((key) => {
+      if (!nextCellsSet.has(key)) {
+        delete workingTextures[key];
+      }
+    });
+
+    const optimization = optimizeCellGrid(nextCellsSet, workingTextures, cellUnitRef.current, nextWalls, nextDoors);
+
+    const optimizedCellsSet = new Set(optimization.cells);
+    const doorsSnapshot = cloneDoors(nextDoors);
+    const wallsSnapshot = cloneWalls(nextWalls);
+
+    cellUnitRef.current = optimization.unit;
+    setCellUnit(optimization.unit);
+
+    const targetSnapDenominator = optimization.unit > 0 ? Math.round(1 / optimization.unit) : 1;
+    const nextSnapDenominator = snapDenominator === 0 ? 0 : targetSnapDenominator;
+    if (snapDenominator !== nextSnapDenominator) {
+      setSnapDenominator(nextSnapDenominator);
+    }
+
+    setCellTextures(optimization.textures);
+    setCells(optimization.cells);
+    setDoors(doorsSnapshot);
+    setWalls(wallsSnapshot);
+
     const trimmedHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
-    trimmedHistory.push({ cells: nextCellsArray, doors: cloneDoors(nextDoors), walls: cloneWalls(nextWalls) });
+    trimmedHistory.push({
+      cellUnit: optimization.unit,
+      snapDenominator: nextSnapDenominator,
+      cells: [...optimization.cells],
+      cellTextures: { ...optimization.textures },
+      doors: cloneDoors(doorsSnapshot),
+      walls: cloneWalls(wallsSnapshot),
+    });
     historyRef.current = trimmedHistory;
     historyIndexRef.current = trimmedHistory.length - 1;
 
-    setCellTextures((prev) => {
-      const next = { ...prev };
-      if (textureMoves && textureMoves.length > 0) {
-        textureMoves.forEach(([fromKey, toKey]) => {
-          if (fromKey === toKey) {
-            return;
-          }
-          const texture = next[fromKey];
-          if (texture !== undefined) {
-            next[toKey] = texture;
-          }
-          delete next[fromKey];
-        });
+    if (message || optimization.unitChanged) {
+      let finalMessage = message ?? '';
+      if (optimization.unitChanged) {
+        const unitLabel = formatUnitLabel(optimization.unit);
+        finalMessage = finalMessage
+          ? `${finalMessage} Grade ajustada para blocos de ${unitLabel}.`
+          : `Grade ajustada para blocos de ${unitLabel}.`;
       }
-      Object.keys(next).forEach((key) => {
-        if (!nextCellsSet.has(key)) {
-          delete next[key];
-        }
-      });
-      return next;
-    });
-
-    setCells(nextCellsArray);
-    setDoors(nextDoors);
-    setWalls(nextWalls);
-    if (message) {
-      setStatus(message);
+      if (finalMessage) {
+        setStatus(finalMessage);
+      }
     }
-  }, [setCellTextures, setCells, setDoors, setWalls, setStatus]);
+
+    return { cellsSet: optimizedCellsSet, cellUnit: optimization.unit };
+  }, [cellTextures, snapDenominator, setCellTextures, setCells, setDoors, setWalls, setCellUnit, setSnapDenominator, setStatus]);
 
   const undo = useCallback(() => {
     if (historyIndexRef.current <= 0) {
@@ -1029,11 +1392,17 @@ const InteriorBuilderPage: React.FC = () => {
     setIsPanning(false);
     setDraftRect(null);
     setWallDraft(null);
+    cellUnitRef.current = snapshot.cellUnit;
+    setCellUnit(snapshot.cellUnit);
+    if (snapDenominator !== snapshot.snapDenominator) {
+      setSnapDenominator(snapshot.snapDenominator);
+    }
     setCells([...snapshot.cells]);
+    setCellTextures({ ...snapshot.cellTextures });
     setDoors(cloneDoors(snapshot.doors));
     setWalls(cloneWalls(snapshot.walls));
     setStatus('Ação desfeita.');
-  }, []);
+  }, [snapDenominator, setSnapDenominator]);
 
   const redo = useCallback(() => {
     if (historyIndexRef.current >= historyRef.current.length - 1) {
@@ -1048,11 +1417,17 @@ const InteriorBuilderPage: React.FC = () => {
     setIsPanning(false);
     setDraftRect(null);
     setWallDraft(null);
+    cellUnitRef.current = snapshot.cellUnit;
+    setCellUnit(snapshot.cellUnit);
+    if (snapDenominator !== snapshot.snapDenominator) {
+      setSnapDenominator(snapshot.snapDenominator);
+    }
     setCells([...snapshot.cells]);
+    setCellTextures({ ...snapshot.cellTextures });
     setDoors(cloneDoors(snapshot.doors));
     setWalls(cloneWalls(snapshot.walls));
     setStatus('Ação refeita.');
-  }, []);
+  }, [snapDenominator, setSnapDenominator]);
 
   const screenToWorld = useCallback((clientX: number, clientY: number): Point => {
     const wrapper = wrapperRef.current;
@@ -1118,11 +1493,31 @@ const InteriorBuilderPage: React.FC = () => {
     const combinedDoorsPre = [...remainingDoors, ...movedDoorsRaw];
     const combinedDoors = combinedDoorsPre.filter(isDoorPlacementValid);
 
-    commitState(nextCellsSet, combinedDoors, combinedWalls, 'Área movida.', textureMoves);
+    const commitResult = commitState(nextCellsSet, combinedDoors, combinedWalls, 'Área movida.', textureMoves);
 
-    const startKey = movedCellKeys[0];
-    if (startKey) {
-      const nextSelection = buildAreaSelectionFromSources(startKey, nextCellsSet, combinedDoors, combinedWalls, cellUnit);
+    let seedKey: string | null = null;
+    if (movedCellKeys.length > 0) {
+      const { x, y } = fromCellKey(movedCellKeys[0]);
+      const coarseX = normalizeCoord(Math.floor((x + OFFSET_EPSILON) / commitResult.cellUnit) * commitResult.cellUnit);
+      const coarseY = normalizeCoord(Math.floor((y + OFFSET_EPSILON) / commitResult.cellUnit) * commitResult.cellUnit);
+      const coarseKey = toCellKey(coarseX, coarseY);
+      if (commitResult.cellsSet.has(coarseKey)) {
+        seedKey = coarseKey;
+      }
+    }
+
+    if (!seedKey && commitResult.cellsSet.size > 0) {
+      seedKey = commitResult.cellsSet.values().next().value ?? null;
+    }
+
+    if (seedKey) {
+      const nextSelection = buildAreaSelectionFromSources(
+        seedKey,
+        commitResult.cellsSet,
+        combinedDoors,
+        combinedWalls,
+        commitResult.cellUnit,
+      );
       if (nextSelection) {
         setSelection(nextSelection);
       } else {
@@ -1133,7 +1528,7 @@ const InteriorBuilderPage: React.FC = () => {
     }
 
     selectionDragRef.current = null;
-  }, [selection, cellSet, walls, doors, commitState, clearSelection, cellUnit, cellTextures]);
+  }, [selection, cellSet, walls, doors, commitState, clearSelection, cellTextures]);
 
   const handleDeleteSelection = useCallback(() => {
     if (selection.kind === 'none') {
@@ -1278,11 +1673,31 @@ const InteriorBuilderPage: React.FC = () => {
     const combinedDoorsPre = [...doors, ...newDoors];
     const combinedDoors = combinedDoorsPre.filter(isDoorPlacementValid);
 
-    commitState(nextCellsSet, combinedDoors, combinedWalls, `Área colada (${clipboard.cells.length} blocos).`);
+    const commitResult = commitState(nextCellsSet, combinedDoors, combinedWalls, `Área colada (${clipboard.cells.length} blocos).`);
 
-    const startKey = newCellKeys[0] ?? null;
-    if (startKey) {
-      const nextSelection = buildAreaSelectionFromSources(startKey, nextCellsSet, combinedDoors, combinedWalls, cellUnit);
+    let seedKey: string | null = null;
+    if (newCellKeys.length > 0) {
+      const { x, y } = fromCellKey(newCellKeys[0]);
+      const coarseX = normalizeCoord(Math.floor((x + OFFSET_EPSILON) / commitResult.cellUnit) * commitResult.cellUnit);
+      const coarseY = normalizeCoord(Math.floor((y + OFFSET_EPSILON) / commitResult.cellUnit) * commitResult.cellUnit);
+      const coarseKey = toCellKey(coarseX, coarseY);
+      if (commitResult.cellsSet.has(coarseKey)) {
+        seedKey = coarseKey;
+      }
+    }
+
+    if (!seedKey && commitResult.cellsSet.size > 0) {
+      seedKey = commitResult.cellsSet.values().next().value ?? null;
+    }
+
+    if (seedKey) {
+      const nextSelection = buildAreaSelectionFromSources(
+        seedKey,
+        commitResult.cellsSet,
+        combinedDoors,
+        combinedWalls,
+        commitResult.cellUnit,
+      );
       if (nextSelection) {
         setSelection(nextSelection);
       } else {
@@ -1291,7 +1706,7 @@ const InteriorBuilderPage: React.FC = () => {
     } else {
       clearSelection();
     }
-  }, [clipboard, cellSet, doors, walls, commitState, clearSelection, screenToWorld, snapValue, alignToCellUnit, cellUnit]);
+  }, [clipboard, cellSet, doors, walls, commitState, clearSelection, screenToWorld, snapValue, alignToCellUnit]);
 
   const handleTextureUpload = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     if (!(selection.kind === 'area' || selection.kind === 'free')) {
@@ -2220,32 +2635,30 @@ const InteriorBuilderPage: React.FC = () => {
                     />
                   )}
 
-                  {cells.map((key) => {
-                    const { x, y } = fromCellKey(key);
-                    const texture = cellTextures[key];
-                    const cellClassName = selectionCellSet?.has(key) ? 'room-fill selected' : 'room-fill';
-                    const rectStyle = texture
-                      ? { fillOpacity: selectionCellSet?.has(key) ? 0.65 : 0.3 }
+                  {cellRenderRects.map((cell) => {
+                    const cellClassName = cell.selected ? 'room-fill selected' : 'room-fill';
+                    const rectStyle = cell.texture
+                      ? { fillOpacity: cell.selected ? 0.65 : 0.3 }
                       : undefined;
                     return (
-                      <g key={key}>
-                        {texture && (
+                      <g key={cell.key}>
+                        {cell.texture && (
                           <image
-                            href={texture}
-                            x={x * GRID_SIZE}
-                            y={y * GRID_SIZE}
-                            width={cellUnit * GRID_SIZE}
-                            height={cellUnit * GRID_SIZE}
+                            href={cell.texture}
+                            x={cell.x * GRID_SIZE}
+                            y={cell.y * GRID_SIZE}
+                            width={cell.width * GRID_SIZE}
+                            height={cell.height * GRID_SIZE}
                             preserveAspectRatio="none"
                             style={{ pointerEvents: 'none' }}
                           />
                         )}
                         <rect
                           className={cellClassName}
-                          x={x * GRID_SIZE}
-                          y={y * GRID_SIZE}
-                          width={cellUnit * GRID_SIZE}
-                          height={cellUnit * GRID_SIZE}
+                          x={cell.x * GRID_SIZE}
+                          y={cell.y * GRID_SIZE}
+                          width={cell.width * GRID_SIZE}
+                          height={cell.height * GRID_SIZE}
                           style={rectStyle}
                         />
                       </g>
