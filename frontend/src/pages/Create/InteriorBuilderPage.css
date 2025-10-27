@@ -41,7 +41,7 @@
 	gap: 12px;
 }
 
-.back-button {
+.interior-topbar .back-button {
 	border: none;
 	background: #ffffff;
 	color: #3a3a4a;
@@ -52,7 +52,7 @@
 	box-shadow: 0 4px 10px rgba(40, 32, 24, 0.12);
 }
 
-.back-button:hover {
+.interior-topbar .back-button:hover {
 	background: #ebe0ce;
 }
 .topbar-heading {
@@ -375,7 +375,7 @@
 	overflow: hidden;
 }
 
-.workspace-header {
+.interior-layout .workspace-header {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
@@ -386,19 +386,19 @@
 	padding: 12px 18px;
 }
 
-.workspace-right {
+.interior-layout .workspace-right {
 	display: flex;
 	align-items: center;
 	gap: 18px;
 }
 
-.workspace-actions {
+.interior-layout .workspace-actions {
 	display: flex;
 	align-items: center;
 	gap: 10px;
 }
 
-.workspace-actions button {
+.interior-layout .workspace-actions button {
 	border: 1px solid rgba(44, 38, 25, 0.16);
 	background: #f6ecda;
 	color: #4a3f32;
@@ -409,37 +409,37 @@
 	transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
 }
 
-.workspace-actions button:hover:not(:disabled) {
+.interior-layout .workspace-actions button:hover:not(:disabled) {
 	border-color: rgba(44, 38, 25, 0.42);
 	box-shadow: 0 10px 18px rgba(40, 30, 20, 0.18);
 	transform: translateY(-1px);
 }
 
-.workspace-actions button:disabled {
+.interior-layout .workspace-actions button:disabled {
 	opacity: 0.45;
 	cursor: not-allowed;
 	box-shadow: none;
 }
 
-.workspace-info {
+.interior-layout .workspace-info {
 	display: flex;
 	flex-direction: column;
 	gap: 4px;
 }
 
-.workspace-info strong {
+.interior-layout .workspace-info strong {
 	font-size: 0.78rem;
 	letter-spacing: 0.12em;
 	text-transform: uppercase;
 	color: #857a6b;
 }
 
-.workspace-info span {
+.interior-layout .workspace-info span {
 	font-size: 0.9rem;
 	color: #403a2e;
 }
 
-.workspace-metrics {
+.interior-layout .workspace-metrics {
 	display: flex;
 	gap: 16px;
 	font-size: 0.78rem;
@@ -532,8 +532,13 @@
 
 .door-shape {
 	fill: none;
-	stroke: rgba(210, 150, 105, 0.78);
+	stroke: rgba(60, 66, 94, 0.85);
 	filter: drop-shadow(0 0 2px rgba(210, 150, 105, 0.25));
+}
+
+.door-preview {
+	stroke-opacity: 0.7;
+	filter: drop-shadow(0 0 2px rgba(210, 150, 105, 0.18));
 }
 
 .door-shape.selected {
@@ -555,13 +560,6 @@
 	stroke: rgba(215, 160, 90, 0.9);
 	stroke-dasharray: 12 8;
 	stroke-width: 4px;
-	stroke-linecap: round;
-}
-
-.draft-door {
-	fill: none;
-	stroke: rgba(210, 150, 105, 0.7);
-	stroke-dasharray: 10 6;
 	stroke-linecap: round;
 }
 

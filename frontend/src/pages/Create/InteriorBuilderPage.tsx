@@ -46,19 +46,6 @@ type OutlineSegment = {
   length: number;
 };
 
-type Rect = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-};
-
-type HistoryEntry = {
-  cells: string[];
-  doors: Door[];
-  walls: InteriorWall[];
-};
-
 type SelectionBounds = {
   minX: number;
   minY: number;
@@ -86,39 +73,52 @@ type FreeSelection = {
   unit: number;
 };
 
-type WallSelection = {
+type SelectionWall = {
   kind: 'wall';
   wallId: string;
 };
 
-type DoorSelection = {
+type SelectionDoor = {
   kind: 'door';
   doorId: string;
 };
 
-type SelectionState = AreaSelection | FreeSelection | WallSelection | DoorSelection | { kind: 'none' };
-
-type ClipboardCell = { x: number; y: number };
-type ClipboardWall = { start: Point; end: Point };
-type ClipboardDoor = { start: Point; end: Point };
+type SelectionState =
+  | { kind: 'none' }
+  | AreaSelection
+  | FreeSelection
+  | SelectionWall
+  | SelectionDoor;
 
 type SelectionClipboard = {
   width: number;
   height: number;
-  cells: ClipboardCell[];
-  walls: ClipboardWall[];
-  doors: ClipboardDoor[];
+  cells: Array<{ x: number; y: number }>;
+  walls: Array<{ start: Point; end: Point }>;
+  doors: Array<{ start: Point; end: Point }>;
+};
+
+type HistoryEntry = {
+  cells: string[];
+  doors: Door[];
+  walls: InteriorWall[];
+};
+
+type Rect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 };
 
 const GRID_SIZE = 48;
-const GRID_EXTENT = 5000;
-const WALL_STROKE = GRID_SIZE * 0.18;
-const DOOR_THICKNESS = 0.32;
-const ZOOM_MIN = 0.25;
-const ZOOM_MAX = 3;
-const gridSnapOptions = [1, 2, 4, 8, 16, 32, 0];
+const GRID_EXTENT = 120;
 const OFFSET_EPSILON = 1e-6;
-
+const WALL_STROKE = GRID_SIZE * 0.18;
+const DOOR_THICKNESS = 0.12;
+const ZOOM_MIN = 0.3;
+const ZOOM_MAX = 4;
+const gridSnapOptions: number[] = [0, 1, 2, 4, 8];
 const paletteTabs: { id: PaletteTab; label: string }[] = [
   { id: 'layers', label: 'Layers' },
   { id: 'images', label: 'Images' },
@@ -2278,44 +2278,152 @@ const InteriorBuilderPage: React.FC = () => {
                   })}
 
                   {walls.map((wall) => {
+                    const x1 = wall.start.x * GRID_SIZE;
+                    const y1 = wall.start.y * GRID_SIZE;
+                    const x2 = wall.end.x * GRID_SIZE;
+                    const y2 = wall.end.y * GRID_SIZE;
+                    const rawDx = x2 - x1;
+                    const rawDy = y2 - y1;
+                    const dx = Math.abs(rawDx);
+                    const dy = Math.abs(rawDy);
                     const wallClassName = selectedWallIds?.has(wall.id)
                       ? 'room-outline internal-wall selected'
                       : 'room-outline internal-wall';
+
+                    if (dx < OFFSET_EPSILON && dy < OFFSET_EPSILON) {
+                      return null;
+                    }
+
+                    if (dy <= OFFSET_EPSILON) {
+                      const left = Math.min(x1, x2);
+                      return (
+                        <rect
+                          key={wall.id}
+                          className={wallClassName}
+                          x={left}
+                          y={y1 - WALL_STROKE / 2}
+                          width={dx}
+                          height={WALL_STROKE}
+                          fill="none"
+                        />
+                      );
+                    }
+
+                    if (dx <= OFFSET_EPSILON) {
+                      const top = Math.min(y1, y2);
+                      return (
+                        <rect
+                          key={wall.id}
+                          className={wallClassName}
+                          x={x1 - WALL_STROKE / 2}
+                          y={top}
+                          width={WALL_STROKE}
+                          height={dy}
+                          fill="none"
+                        />
+                      );
+                    }
+
+                    const length = Math.hypot(rawDx, rawDy);
+                    if (length <= OFFSET_EPSILON) {
+                      return null;
+                    }
+
+                    const halfWidth = WALL_STROKE / 2;
+                    const offsetX = (-rawDy / length) * halfWidth;
+                    const offsetY = (rawDx / length) * halfWidth;
+                    const polygonPoints = [
+                      `${x1 + offsetX},${y1 + offsetY}`,
+                      `${x2 + offsetX},${y2 + offsetY}`,
+                      `${x2 - offsetX},${y2 - offsetY}`,
+                      `${x1 - offsetX},${y1 - offsetY}`,
+                    ].join(' ');
+
                     return (
-                      <line
+                      <polygon
                         key={wall.id}
                         className={wallClassName}
-                        x1={wall.start.x * GRID_SIZE}
-                        y1={wall.start.y * GRID_SIZE}
-                        x2={wall.end.x * GRID_SIZE}
-                        y2={wall.end.y * GRID_SIZE}
-                        strokeWidth={WALL_STROKE}
-                        strokeLinecap="round"
+                        points={polygonPoints}
+                        fill="none"
                       />
                     );
                   })}
 
-                  {wallPreview && (
-                    <line
-                      className="draft-wall"
-                      x1={wallPreview.start.x * GRID_SIZE}
-                      y1={wallPreview.start.y * GRID_SIZE}
-                      x2={wallPreview.end.x * GRID_SIZE}
-                      y2={wallPreview.end.y * GRID_SIZE}
-                      strokeWidth={WALL_STROKE}
-                      strokeLinecap="round"
-                    />
-                  )}
+                  {wallPreview && (() => {
+                    const x1 = wallPreview.start.x * GRID_SIZE;
+                    const y1 = wallPreview.start.y * GRID_SIZE;
+                    const x2 = wallPreview.end.x * GRID_SIZE;
+                    const y2 = wallPreview.end.y * GRID_SIZE;
+                    const rawDx = x2 - x1;
+                    const rawDy = y2 - y1;
+                    const dx = Math.abs(rawDx);
+                    const dy = Math.abs(rawDy);
+
+                    if (dx < OFFSET_EPSILON && dy < OFFSET_EPSILON) {
+                      return null;
+                    }
+
+                    if (dy <= OFFSET_EPSILON) {
+                      const left = Math.min(x1, x2);
+                      return (
+                        <rect
+                          className="draft-wall"
+                          x={left}
+                          y={y1 - WALL_STROKE / 2}
+                          width={dx}
+                          height={WALL_STROKE}
+                          fill="none"
+                        />
+                      );
+                    }
+
+                    if (dx <= OFFSET_EPSILON) {
+                      const top = Math.min(y1, y2);
+                      return (
+                        <rect
+                          className="draft-wall"
+                          x={x1 - WALL_STROKE / 2}
+                          y={top}
+                          width={WALL_STROKE}
+                          height={dy}
+                          fill="none"
+                        />
+                      );
+                    }
+
+                    const length = Math.hypot(rawDx, rawDy);
+                    if (length <= OFFSET_EPSILON) {
+                      return null;
+                    }
+
+                    const halfWidth = WALL_STROKE / 2;
+                    const offsetX = (-rawDy / length) * halfWidth;
+                    const offsetY = (rawDx / length) * halfWidth;
+                    const polygonPoints = [
+                      `${x1 + offsetX},${y1 + offsetY}`,
+                      `${x2 + offsetX},${y2 + offsetY}`,
+                      `${x2 - offsetX},${y2 - offsetY}`,
+                      `${x1 - offsetX},${y1 - offsetY}`,
+                    ].join(' ');
+
+                    return (
+                      <polygon
+                        className="draft-wall"
+                        points={polygonPoints}
+                        fill="none"
+                      />
+                    );
+                  })()}
 
                   {doorPreview && (
                     <line
-                      className="draft-door"
+                      className="door-shape door-preview"
                       x1={doorPreview.start.x * GRID_SIZE}
                       y1={doorPreview.start.y * GRID_SIZE}
                       x2={doorPreview.end.x * GRID_SIZE}
                       y2={doorPreview.end.y * GRID_SIZE}
-                      strokeWidth={DOOR_THICKNESS * GRID_SIZE}
-                      strokeLinecap="round"
+                      strokeWidth={WALL_STROKE}
+                      strokeLinecap="square"
                     />
                   )}
 
@@ -2329,8 +2437,8 @@ const InteriorBuilderPage: React.FC = () => {
                         y1={door.start.y * GRID_SIZE}
                         x2={door.end.x * GRID_SIZE}
                         y2={door.end.y * GRID_SIZE}
-                        strokeWidth={DOOR_THICKNESS * GRID_SIZE}
-                        strokeLinecap="round"
+                        strokeWidth={WALL_STROKE}
+                        strokeLinecap="square"
                       />
                     );
                   })}
