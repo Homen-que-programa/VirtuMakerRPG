@@ -1,9 +1,9 @@
-import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { CSSProperties, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './InteriorBuilderPage.css';
 
 type Tool = 'pan' | 'erase' | 'select' | 'area' | 'door' | 'wall' | 'free-select';
-type PaletteTab = 'layers' | 'images' | 'shapes';
+type PaletteTab = 'ambience' | 'images' | 'shapes';
 type AxisOrientation = 'horizontal' | 'vertical';
 type DoorOrientation = AxisOrientation | 'diagonal';
 
@@ -30,6 +30,27 @@ type InteriorWall = {
   end: Point;
 };
 
+type CanvasTheme = {
+  surfaceBackground: string;
+  gridBackground: string;
+  gridStroke: string;
+  subgridStroke: string;
+  axisColor: string;
+  hoverFill: string;
+  hoverStroke: string;
+  roomFill: string;
+  roomFillSelected: string;
+  outlineFill: string;
+  wallFill: string;
+  wallFillSelected: string;
+  doorStroke: string;
+  doorStrokeSelected: string;
+  draftWallStroke: string;
+  draftRectFill: string;
+  draftRectStroke: string;
+  draftLabel: string;
+};
+
 type PaletteTile = {
   id: string;
   tab: PaletteTab;
@@ -37,6 +58,7 @@ type PaletteTile = {
   description: string;
   background: string;
   border?: string;
+  canvasTheme?: CanvasTheme;
 };
 
 type OutlineSegment = {
@@ -135,7 +157,7 @@ const gridSnapOptions: number[] = [0, 1, 2, 4, 8];
 const CELL_UNIT_OPTIONS = [1, 0.5, 0.25, 0.125] as const;
 const CELL_RENDER_UNIT_OPTIONS = [8, 4, 2, 1, 0.5, 0.25, 0.125] as const;
 const paletteTabs: { id: PaletteTab; label: string }[] = [
-  { id: 'layers', label: 'Layers' },
+  { id: 'ambience', label: 'Ambiente' },
   { id: 'images', label: 'Images' },
   { id: 'shapes', label: 'Shapes' },
 ];
@@ -143,48 +165,169 @@ const paletteTabs: { id: PaletteTab; label: string }[] = [
 const paletteTiles: PaletteTile[] = [
   {
     id: 'stone-corner',
-    tab: 'layers',
+    tab: 'ambience',
     label: 'Esquina pedra',
     description: 'Parede com textura de pedra.',
     background: 'linear-gradient(135deg, #24262d 0%, #3b3f48 60%, #8b8f9a 100%)',
+    canvasTheme: {
+      surfaceBackground: 'radial-gradient(circle at 50% 45%, #2f3038 0%, #1f2128 65%, #15161b 100%)',
+      gridBackground: '#23252d',
+      gridStroke: 'rgba(196, 190, 180, 0.25)',
+      subgridStroke: 'rgba(196, 190, 180, 0.12)',
+      axisColor: 'rgba(236, 218, 189, 0.45)',
+      hoverFill: 'rgba(244, 208, 132, 0.16)',
+      hoverStroke: 'rgba(247, 215, 140, 0.55)',
+      roomFill: 'rgba(140, 160, 206, 0.58)',
+      roomFillSelected: 'rgba(193, 214, 255, 0.8)',
+      outlineFill: 'rgba(230, 214, 180, 0.85)',
+      wallFill: 'rgba(240, 225, 185, 0.9)',
+      wallFillSelected: 'rgba(255, 244, 200, 0.95)',
+      doorStroke: 'rgba(238, 198, 128, 0.92)',
+      doorStrokeSelected: 'rgba(255, 218, 160, 0.98)',
+      draftWallStroke: 'rgba(238, 198, 128, 0.9)',
+      draftRectFill: 'rgba(255, 220, 155, 0.28)',
+      draftRectStroke: 'rgba(225, 190, 120, 0.75)',
+      draftLabel: '#f3e2bb',
+    },
   },
   {
     id: 'blue-floor',
-    tab: 'layers',
+    tab: 'ambience',
     label: 'Piso frio',
     description: 'Azulejos azul claro.',
     background: 'linear-gradient(135deg, #5a7bb5 0%, #93b4ec 100%)',
+    canvasTheme: {
+      surfaceBackground: 'linear-gradient(180deg, #cfdaf3 0%, #a4bbef 45%, #7e9ad9 100%)',
+      gridBackground: 'rgba(199, 216, 247, 0.82)',
+      gridStroke: 'rgba(78, 110, 174, 0.35)',
+      subgridStroke: 'rgba(78, 110, 174, 0.18)',
+      axisColor: 'rgba(255, 255, 255, 0.6)',
+      hoverFill: 'rgba(255, 255, 255, 0.22)',
+      hoverStroke: 'rgba(255, 255, 255, 0.7)',
+      roomFill: 'rgba(109, 149, 234, 0.55)',
+      roomFillSelected: 'rgba(142, 184, 255, 0.75)',
+      outlineFill: 'rgba(39, 70, 142, 0.65)',
+      wallFill: 'rgba(36, 64, 126, 0.85)',
+      wallFillSelected: 'rgba(59, 91, 157, 0.95)',
+      doorStroke: 'rgba(255, 255, 255, 0.85)',
+      doorStrokeSelected: 'rgba(230, 240, 255, 0.95)',
+      draftWallStroke: 'rgba(62, 102, 186, 0.85)',
+      draftRectFill: 'rgba(168, 201, 255, 0.35)',
+      draftRectStroke: 'rgba(83, 133, 226, 0.82)',
+      draftLabel: '#1e2d58',
+    },
   },
   {
     id: 'grid-highlight',
-    tab: 'layers',
+    tab: 'ambience',
     label: 'Grid alto contraste',
     description: 'Grade clara para interiores.',
     background: 'linear-gradient(135deg, #fefefe 0%, #dfe0e6 100%)',
     border: '#bfc3d1',
+    canvasTheme: {
+      surfaceBackground: 'linear-gradient(180deg, #ffffff 0%, #f5f6f8 60%, #e5e7ec 100%)',
+      gridBackground: '#ffffff',
+      gridStroke: 'rgba(80, 80, 90, 0.2)',
+      subgridStroke: 'rgba(120, 120, 140, 0.12)',
+      axisColor: 'rgba(120, 130, 150, 0.55)',
+      hoverFill: 'rgba(190, 220, 255, 0.2)',
+      hoverStroke: 'rgba(120, 140, 200, 0.5)',
+      roomFill: 'rgba(96, 128, 200, 0.45)',
+      roomFillSelected: 'rgba(70, 110, 220, 0.6)',
+      outlineFill: 'rgba(85, 110, 160, 0.5)',
+      wallFill: 'rgba(50, 80, 140, 0.7)',
+      wallFillSelected: 'rgba(45, 72, 128, 0.85)',
+      doorStroke: 'rgba(180, 130, 80, 0.8)',
+      doorStrokeSelected: 'rgba(210, 150, 90, 0.9)',
+      draftWallStroke: 'rgba(98, 120, 180, 0.85)',
+      draftRectFill: 'rgba(180, 210, 255, 0.3)',
+      draftRectStroke: 'rgba(120, 150, 210, 0.8)',
+      draftLabel: '#425070',
+    },
   },
   {
+
     id: 'tones-parchment',
-    tab: 'layers',
+    tab: 'ambience',
     label: 'Pergaminho',
     description: 'Base bege com leve ruído.',
     background: 'linear-gradient(135deg, #f3e4d3 0%, #d8c2a9 100%)',
     border: '#c3aa8a',
+    canvasTheme: {
+      surfaceBackground: 'linear-gradient(180deg, #f8eedc 0%, #f1e0c5 55%, #e5cda6 100%)',
+      gridBackground: 'rgba(248, 237, 218, 0.92)',
+      gridStroke: 'rgba(156, 120, 82, 0.4)',
+      subgridStroke: 'rgba(156, 120, 82, 0.2)',
+      axisColor: 'rgba(108, 76, 42, 0.6)',
+      hoverFill: 'rgba(255, 236, 196, 0.28)',
+      hoverStroke: 'rgba(195, 142, 78, 0.8)',
+      roomFill: 'rgba(180, 152, 112, 0.5)',
+      roomFillSelected: 'rgba(204, 174, 128, 0.7)',
+      outlineFill: 'rgba(140, 100, 60, 0.7)',
+      wallFill: 'rgba(108, 76, 42, 0.75)',
+      wallFillSelected: 'rgba(128, 90, 50, 0.9)',
+      doorStroke: 'rgba(176, 118, 60, 0.85)',
+      doorStrokeSelected: 'rgba(206, 138, 76, 0.95)',
+      draftWallStroke: 'rgba(200, 150, 90, 0.9)',
+      draftRectFill: 'rgba(240, 204, 150, 0.35)',
+      draftRectStroke: 'rgba(198, 150, 94, 0.85)',
+      draftLabel: '#6b4a2f',
+    },
   },
   {
     id: 'dark-brick',
-    tab: 'layers',
+    tab: 'ambience',
     label: 'Tijolo escuro',
     description: 'Parede grossa para masmorras.',
     background: 'linear-gradient(135deg, #2e2a2a 0%, #4c3f3f 100%)',
+    canvasTheme: {
+      surfaceBackground: 'linear-gradient(160deg, #1c1818 0%, #2b2222 50%, #3a2d2d 100%)',
+      gridBackground: '#231a1a',
+      gridStroke: 'rgba(206, 96, 82, 0.3)',
+      subgridStroke: 'rgba(206, 96, 82, 0.18)',
+      axisColor: 'rgba(255, 195, 160, 0.5)',
+      hoverFill: 'rgba(255, 144, 120, 0.2)',
+      hoverStroke: 'rgba(255, 188, 153, 0.6)',
+      roomFill: 'rgba(170, 94, 84, 0.55)',
+      roomFillSelected: 'rgba(220, 130, 110, 0.75)',
+      outlineFill: 'rgba(255, 172, 148, 0.65)',
+      wallFill: 'rgba(255, 144, 120, 0.9)',
+      wallFillSelected: 'rgba(255, 178, 150, 0.95)',
+      doorStroke: 'rgba(255, 208, 160, 0.9)',
+      doorStrokeSelected: 'rgba(255, 228, 190, 0.95)',
+      draftWallStroke: 'rgba(240, 162, 128, 0.9)',
+      draftRectFill: 'rgba(255, 188, 153, 0.32)',
+      draftRectStroke: 'rgba(255, 164, 130, 0.86)',
+      draftLabel: '#ffdcc4',
+    },
   },
   {
     id: 'grey-floor',
-    tab: 'layers',
+    tab: 'ambience',
     label: 'Cimento',
     description: 'Base neutra para oficinas.',
     background: 'linear-gradient(135deg, #a7a9af 0%, #c1c3c9 100%)',
     border: '#9c9fa8',
+    canvasTheme: {
+      surfaceBackground: 'linear-gradient(180deg, #d5d6da 0%, #b9bcc3 50%, #a0a3aa 100%)',
+      gridBackground: 'rgba(216, 218, 224, 0.9)',
+      gridStroke: 'rgba(90, 96, 112, 0.28)',
+      subgridStroke: 'rgba(90, 96, 112, 0.16)',
+      axisColor: 'rgba(70, 76, 96, 0.55)',
+      hoverFill: 'rgba(255, 255, 255, 0.2)',
+      hoverStroke: 'rgba(140, 146, 156, 0.6)',
+      roomFill: 'rgba(110, 136, 176, 0.48)',
+      roomFillSelected: 'rgba(138, 166, 214, 0.68)',
+      outlineFill: 'rgba(88, 104, 146, 0.62)',
+      wallFill: 'rgba(72, 86, 122, 0.82)',
+      wallFillSelected: 'rgba(92, 112, 150, 0.92)',
+      doorStroke: 'rgba(214, 188, 140, 0.88)',
+      doorStrokeSelected: 'rgba(234, 208, 160, 0.94)',
+      draftWallStroke: 'rgba(120, 140, 180, 0.85)',
+      draftRectFill: 'rgba(176, 198, 236, 0.32)',
+      draftRectStroke: 'rgba(132, 152, 194, 0.82)',
+      draftLabel: '#39425c',
+    },
   },
   {
     id: 'decor-pillars',
@@ -218,6 +361,31 @@ const paletteTiles: PaletteTile[] = [
     border: '#bcb2ff',
   },
 ];
+
+const firstAmbienceTile = paletteTiles.find((tile) => tile.tab === 'ambience' && tile.canvasTheme);
+
+const defaultCanvasTheme: CanvasTheme = firstAmbienceTile?.canvasTheme ?? {
+  surfaceBackground: 'repeat top left / 32px 32px radial-gradient(circle at center, rgba(0, 0, 0, 0.08) 1px, transparent 1px), #f2e8da',
+  gridBackground: '#f2e8da',
+  gridStroke: 'rgba(90, 76, 62, 0.38)',
+  subgridStroke: 'rgba(120, 110, 90, 0.22)',
+  axisColor: 'rgba(84, 70, 55, 0.35)',
+  hoverFill: 'rgba(255, 245, 228, 0.28)',
+  hoverStroke: 'rgba(98, 80, 60, 0.45)',
+  roomFill: 'rgba(186, 198, 230, 0.6)',
+  roomFillSelected: 'rgba(152, 170, 216, 0.85)',
+  outlineFill: 'rgba(60, 66, 94, 0.85)',
+  wallFill: 'rgba(60, 66, 94, 0.85)',
+  wallFillSelected: 'rgba(43, 45, 70, 0.95)',
+  doorStroke: 'rgba(60, 66, 94, 0.85)',
+  doorStrokeSelected: '#ffe6a8',
+  draftWallStroke: 'rgba(215, 160, 90, 0.9)',
+  draftRectFill: 'rgba(255, 228, 173, 0.35)',
+  draftRectStroke: 'rgba(215, 180, 120, 0.8)',
+  draftLabel: '#4f4538',
+};
+
+const defaultAmbienceTileId = firstAmbienceTile?.id ?? '';
 
 const toolOptions: { id: Tool; label: string; hint: string }[] = [
   {
@@ -975,7 +1143,8 @@ const InteriorBuilderPage: React.FC = () => {
   const [wallDraft, setWallDraft] = useState<{ start: Point; current: Point } | null>(null);
   const [doorDraft, setDoorDraft] = useState<{ start: Point; current: Point } | null>(null);
   const [isPanning, setIsPanning] = useState(false);
-  const [paletteTab, setPaletteTab] = useState<PaletteTab>('layers');
+  const [paletteTab, setPaletteTab] = useState<PaletteTab>('ambience');
+  const [activeAmbienceId, setActiveAmbienceId] = useState<string>(defaultAmbienceTileId || 'stone-corner');
   const [selection, setSelection] = useState<SelectionState>({ kind: 'none' });
   const [clipboard, setClipboard] = useState<SelectionClipboard | null>(null);
   const [hoverCell, setHoverCell] = useState<Point | null>(null);
@@ -1060,6 +1229,17 @@ const InteriorBuilderPage: React.FC = () => {
   const cellUnitRef = useRef(cellUnit);
   const textureInputRef = useRef<HTMLInputElement | null>(null);
   const textureInputId = useId();
+  const handlePaletteTile = useCallback((tile: PaletteTile) => {
+    if (tile.tab !== 'ambience' || !tile.canvasTheme) {
+      return;
+    }
+    if (tile.id === activeAmbienceId) {
+      setStatus(`Ambiente "${tile.label}" já está ativo.`);
+      return;
+    }
+    setActiveAmbienceId(tile.id);
+    setStatus(`Ambiente "${tile.label}" aplicado.`);
+  }, [activeAmbienceId, setStatus]);
 
   useLayoutEffect(() => {
     const wrapper = wrapperRef.current;
@@ -1077,6 +1257,15 @@ const InteriorBuilderPage: React.FC = () => {
   useEffect(() => {
     cellUnitRef.current = cellUnit;
   }, [cellUnit]);
+
+  const activeCanvasTheme = useMemo(() => {
+    const tile = paletteTiles.find((item) => item.id === activeAmbienceId && item.canvasTheme);
+    return tile?.canvasTheme ?? defaultCanvasTheme;
+  }, [activeAmbienceId]);
+
+  const canvasSurfaceStyle = useMemo<CSSProperties>(() => ({
+    background: activeCanvasTheme.surfaceBackground,
+  }), [activeCanvasTheme]);
 
 
   const cellSet = useMemo(() => new Set(cells), [cells]);
@@ -2494,16 +2683,26 @@ const InteriorBuilderPage: React.FC = () => {
             </div>
 
             <div className="tile-grid" role="list">
-              {filteredTiles.map((tile) => (
-                <button key={tile.id} type="button" className="tile-card" role="listitem">
-                  <span
-                    className="tile-swatch"
-                    style={{ background: tile.background, borderColor: tile.border ?? 'transparent' }}
-                  />
-                  <span className="tile-title">{tile.label}</span>
-                  <span className="tile-desc">{tile.description}</span>
-                </button>
-              ))}
+              {filteredTiles.map((tile) => {
+                const isActive = tile.tab === 'ambience' && tile.id === activeAmbienceId;
+                return (
+                  <button
+                    key={tile.id}
+                    type="button"
+                    className={isActive ? 'tile-card selected' : 'tile-card'}
+                    role="listitem"
+                    aria-pressed={tile.tab === 'ambience' ? isActive : undefined}
+                    onClick={() => handlePaletteTile(tile)}
+                  >
+                    <span
+                      className="tile-swatch"
+                      style={{ background: tile.background, borderColor: tile.border ?? 'transparent' }}
+                    />
+                    <span className="tile-title">{tile.label}</span>
+                    <span className="tile-desc">{tile.description}</span>
+                  </button>
+                );
+              })}
             </div>
 
             <div className="grid-settings-card">
@@ -2565,6 +2764,7 @@ const InteriorBuilderPage: React.FC = () => {
               ref={wrapperRef}
               className={canvasClassName}
               data-tool={activeTool}
+              style={canvasSurfaceStyle}
               onPointerDown={handlePointerDown}
               onPointerMove={handlePointerMove}
               onPointerUp={handlePointerUp}
@@ -2576,13 +2776,20 @@ const InteriorBuilderPage: React.FC = () => {
               <svg width="100%" height="100%">
                 <defs>
                   <pattern id="floor-grid" width={GRID_SIZE} height={GRID_SIZE} patternUnits="userSpaceOnUse">
-                    <path d={`M ${GRID_SIZE} 0 L 0 0 0 ${GRID_SIZE}`} stroke="rgba(90, 76, 62, 0.38)" strokeWidth="1" fill="none" />
+                    <rect width={GRID_SIZE} height={GRID_SIZE} fill={activeCanvasTheme.gridBackground} />
+                    <path
+                      d={`M ${GRID_SIZE} 0 L 0 0 0 ${GRID_SIZE}`}
+                      stroke={activeCanvasTheme.gridStroke}
+                      strokeWidth="1"
+                      fill="none"
+                    />
                   </pattern>
                   {subgridPatternId && subgridStep && (
                     <pattern id={subgridPatternId} width={subgridStep} height={subgridStep} patternUnits="userSpaceOnUse">
+                      <rect width={subgridStep} height={subgridStep} fill="transparent" />
                       <path
                         d={`M ${subgridStep} 0 L 0 0 0 ${subgridStep}`}
-                        stroke="rgba(120, 110, 90, 0.22)"
+                        stroke={activeCanvasTheme.subgridStroke}
                         strokeWidth={0.75}
                         fill="none"
                       />
@@ -2616,6 +2823,7 @@ const InteriorBuilderPage: React.FC = () => {
                     y1={0}
                     x2={GRID_EXTENT * GRID_SIZE}
                     y2={0}
+                    stroke={activeCanvasTheme.axisColor}
                   />
                   <line
                     className="axis-line origin"
@@ -2623,6 +2831,7 @@ const InteriorBuilderPage: React.FC = () => {
                     y1={-GRID_EXTENT * GRID_SIZE}
                     x2={0}
                     y2={GRID_EXTENT * GRID_SIZE}
+                    stroke={activeCanvasTheme.axisColor}
                   />
 
                   {hoverCell && (
@@ -2632,14 +2841,20 @@ const InteriorBuilderPage: React.FC = () => {
                       y={hoverCell.y * GRID_SIZE}
                       width={hoverUnit * GRID_SIZE}
                       height={hoverUnit * GRID_SIZE}
+                      fill={activeCanvasTheme.hoverFill}
+                      stroke={activeCanvasTheme.hoverStroke}
                     />
                   )}
 
                   {cellRenderRects.map((cell) => {
                     const cellClassName = cell.selected ? 'room-fill selected' : 'room-fill';
-                    const rectStyle = cell.texture
-                      ? { fillOpacity: cell.selected ? 0.65 : 0.3 }
-                      : undefined;
+                    const baseFill = cell.selected ? activeCanvasTheme.roomFillSelected : activeCanvasTheme.roomFill;
+                    const rectStyle: CSSProperties = {
+                      fill: baseFill,
+                    };
+                    if (cell.texture) {
+                      rectStyle.fillOpacity = cell.selected ? 0.65 : 0.3;
+                    }
                     return (
                       <g key={cell.key}>
                         {cell.texture && (
@@ -2675,6 +2890,8 @@ const InteriorBuilderPage: React.FC = () => {
                           y={segment.y * GRID_SIZE - WALL_STROKE / 2}
                           width={segment.length * GRID_SIZE}
                           height={WALL_STROKE}
+                          fill={activeCanvasTheme.outlineFill}
+                          stroke="none"
                         />
                       );
                     }
@@ -2686,6 +2903,8 @@ const InteriorBuilderPage: React.FC = () => {
                         y={segment.y * GRID_SIZE}
                         width={WALL_STROKE}
                         height={segment.length * GRID_SIZE}
+                        fill={activeCanvasTheme.outlineFill}
+                        stroke="none"
                       />
                     );
                   })}
@@ -2699,6 +2918,9 @@ const InteriorBuilderPage: React.FC = () => {
                     const rawDy = y2 - y1;
                     const dx = Math.abs(rawDx);
                     const dy = Math.abs(rawDy);
+                    const wallFill = selectedWallIds?.has(wall.id)
+                      ? activeCanvasTheme.wallFillSelected
+                      : activeCanvasTheme.wallFill;
                     const wallClassName = selectedWallIds?.has(wall.id)
                       ? 'room-outline internal-wall selected'
                       : 'room-outline internal-wall';
@@ -2717,7 +2939,8 @@ const InteriorBuilderPage: React.FC = () => {
                           y={y1 - WALL_STROKE / 2}
                           width={dx}
                           height={WALL_STROKE}
-                          fill="none"
+                          fill={wallFill}
+                          stroke="none"
                         />
                       );
                     }
@@ -2732,7 +2955,8 @@ const InteriorBuilderPage: React.FC = () => {
                           y={top}
                           width={WALL_STROKE}
                           height={dy}
-                          fill="none"
+                          fill={wallFill}
+                          stroke="none"
                         />
                       );
                     }
@@ -2757,7 +2981,8 @@ const InteriorBuilderPage: React.FC = () => {
                         key={wall.id}
                         className={wallClassName}
                         points={polygonPoints}
-                        fill="none"
+                        fill={wallFill}
+                        stroke="none"
                       />
                     );
                   })}
@@ -2786,6 +3011,7 @@ const InteriorBuilderPage: React.FC = () => {
                           width={dx}
                           height={WALL_STROKE}
                           fill="none"
+                          stroke={activeCanvasTheme.draftWallStroke}
                         />
                       );
                     }
@@ -2800,6 +3026,7 @@ const InteriorBuilderPage: React.FC = () => {
                           width={WALL_STROKE}
                           height={dy}
                           fill="none"
+                          stroke={activeCanvasTheme.draftWallStroke}
                         />
                       );
                     }
@@ -2824,6 +3051,7 @@ const InteriorBuilderPage: React.FC = () => {
                         className="draft-wall"
                         points={polygonPoints}
                         fill="none"
+                        stroke={activeCanvasTheme.draftWallStroke}
                       />
                     );
                   })()}
@@ -2837,11 +3065,15 @@ const InteriorBuilderPage: React.FC = () => {
                       y2={doorPreview.end.y * GRID_SIZE}
                       strokeWidth={WALL_STROKE}
                       strokeLinecap="square"
+                      stroke={activeCanvasTheme.doorStroke}
                     />
                   )}
 
                   {doors.map((door) => {
                     const doorClassName = selectedDoorIds?.has(door.id) ? 'door-shape selected' : 'door-shape';
+                    const strokeColor = selectedDoorIds?.has(door.id)
+                      ? activeCanvasTheme.doorStrokeSelected
+                      : activeCanvasTheme.doorStroke;
                     return (
                       <line
                         key={door.id}
@@ -2852,6 +3084,7 @@ const InteriorBuilderPage: React.FC = () => {
                         y2={door.end.y * GRID_SIZE}
                         strokeWidth={WALL_STROKE}
                         strokeLinecap="square"
+                        stroke={strokeColor}
                       />
                     );
                   })}
@@ -2922,11 +3155,14 @@ const InteriorBuilderPage: React.FC = () => {
                         y={draftPreview.y * GRID_SIZE}
                         width={draftPreview.width * GRID_SIZE}
                         height={draftPreview.height * GRID_SIZE}
+                        fill={activeCanvasTheme.draftRectFill}
+                        stroke={activeCanvasTheme.draftRectStroke}
                       />
                       <text
                         className="draft-label"
                         x={(draftPreview.x + draftPreview.width / 2) * GRID_SIZE}
                         y={(draftPreview.y + draftPreview.height / 2) * GRID_SIZE}
+                        fill={activeCanvasTheme.draftLabel}
                       >
                         {draftPreview.width} x {draftPreview.height}
                       </text>
